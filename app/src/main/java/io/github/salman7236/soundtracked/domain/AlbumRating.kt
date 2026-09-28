@@ -1,9 +1,11 @@
 package io.github.salman7236.soundtracked.domain
 
-data class Rating (
+import java.time.Instant
+
+data class AlbumRating(
     val id: String,
-    val albumRating: String,
-    val trackId: String,
-    val rating: Int,
     val userId: String,
+    val albumId: String,
+    val value: Int?,
+    val createdAt: Instant,
 )
