@@ -4,7 +4,7 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.Instant
 
-data class DiaryEntry (
+data class DiaryEntry(
     val id: String,
     val albumId: String,
     val releaseId: String?,
