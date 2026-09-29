@@ -19,10 +19,11 @@ A social-style music diary: rate albums and tracks, write reviews, favorite albu
 - **No vibe coding.** Salman is here to learn. Explain concepts first and let him write the code. Give full code only when he explicitly asks for it.
 - Keep explanations concise. Avoid heavy bullet-point formatting.
 - Point out real errors and bad ideas directly. Do not just agree.
-- Do not silently reverse settled decisions (see "Decisions" and "Rejected" below). If you think one is wrong, say so and explain why.
+- Do not silently reverse settled decisions (see "Product decisions" and "Rejected" below). If you think one is wrong, say so and explain why.
 - Do not add dependencies, modules or architecture layers that are not listed here without asking.
 - Python tooling (backend, when it exists): use `uv`, not `pip`.
 - Environment: Windows 11 and Arch Linux, Android Studio, Pixel 7 via wireless debugging.
+- Git: small commits in dependency order (dependencies, then data, then state/ViewModel, then UI, then wiring), so every commit builds on its own.
 
 ## Tech stack
 
@@ -30,9 +31,9 @@ Settled:
 
 - Kotlin + Jetpack Compose (Material 3), single Gradle module `:app`
 - minSdk 26, targetSdk 37, compileSdk 37
-- MVVM, Coroutines/Flow
+- MVVM, Coroutines/Flow (coroutines arrive transitively through the lifecycle artifacts, not declared directly)
 - Planned client libraries: Room (offline-first cache), Retrofit, Coil, Navigation Compose
-- **No Hilt yet.** Wire dependencies manually for now.
+- **No Hilt yet.** Wire dependencies manually for now (see "Architecture and data flow").
 - Domain model, network DTO and Room entity are **three separate classes** with mapper functions between them. Never share one class across layers.
 
 Backend (planned, not in the repo yet):
@@ -62,6 +63,10 @@ Defined in `gradle/libs.versions.toml` (version catalog). Add all new dependenci
 - Configuration cache is enabled (`gradle.properties`)
 - Release build has optimization disabled for now
 
+Current `:app` dependencies: Compose BOM, `activity-compose`, `material3`, `ui`, `ui-graphics`, `ui-tooling-preview`, `core-ktx`, `lifecycle-runtime-ktx`, `lifecycle-viewmodel-compose`, `lifecycle-runtime-compose`. The lifecycle artifacts all share the version ref `lifecycleRuntimeKtx` (2.6.1, which is old; a bump is worth considering later).
+
+Line endings: LF everywhere. `.gitattributes` has `* text=auto eol=lf` plus `*.bat text eol=crlf` (Windows batch files need CRLF), and the project code style scheme (`.idea/codeStyles/Project.xml`) sets LF for new files. `git ls-files --eol` shows the state; only `gradlew.bat` should be `w/crlf`.
+
 Known issue: downloads sometimes fail without a VPN (Warp).
 
 Commands:
@@ -77,6 +82,7 @@ Commands:
 ```
 Soundtracked/
 ├── AGENTS.md
+├── .gitattributes                # LF everywhere, CRLF for *.bat
 ├── build.gradle.kts              # top-level plugins
 ├── settings.gradle.kts           # repos, module include, foojay toolchain resolver
 ├── gradle.properties
@@ -93,11 +99,20 @@ Soundtracked/
         │   ├── res/              # values (strings, colors, themes), xml (backup rules), mipmap, drawable
         │   └── java/io/github/salman7236/soundtracked/
         │       ├── MainActivity.kt
+        │       ├── data/
+        │       │   └── repository/
+        │       │       ├── AlbumRepository.kt
+        │       │       └── FakeAlbumRepository.kt
         │       ├── domain/
-        │       ├── ui/
-        │       │   ├── album/
-        │       │   └── theme/
-        │       └── (data/ is planned, not created yet)
+        │       └── ui/
+        │           ├── album/
+        │           │   ├── AlbumList.kt
+        │           │   ├── AlbumListItem.kt
+        │           │   ├── AlbumListScreen.kt
+        │           │   ├── AlbumListUiState.kt
+        │           │   ├── AlbumListViewModel.kt
+        │           │   └── AlbumRow.kt
+        │           └── theme/
         ├── test/                 # local unit tests (currently only the template example)
         └── androidTest/          # instrumented tests (currently only the template example)
 ```
@@ -109,16 +124,38 @@ Base path: `app/src/main/java/io/github/salman7236/soundtracked/`
 | Package | Purpose |
 |---|---|
 | `domain/` | Pure Kotlin domain classes. No Android or framework dependencies. |
-| `ui/album/` | Album-related composables and UI models. |
+| `data/repository/` | Repository interfaces returning domain classes, plus implementations. Only the interface and a fake exist so far. |
+| `data/local/`, `data/remote/` (planned) | `local/` (Room), `remote/` (Retrofit + DTOs). Not created yet. |
+| `ui/album/` | Album list feature: composables, UI state, UI models, ViewModel. |
 | `ui/theme/` | Material 3 theme (`Theme.kt`, `Color.kt`, `Type.kt`). Still the Studio template defaults; dynamic color enabled on Android 12+. |
-| `data/` (planned) | `local/` (Room), `remote/` (Retrofit + DTOs), `repository/`. |
 
 Files today:
 
-- `MainActivity.kt`: still the template (a `Greeting` composable inside a `Scaffold`). Will become the navigation host.
+- `MainActivity.kt`: creates `AlbumListViewModel` with `FakeAlbumRepository`, collects its state, and hosts `AlbumListScreen` inside a `Scaffold`. `onAlbumClick` is still a no-op. Will become the navigation host.
 - `domain/`: `Artist`, `Album`, `PrimaryType`, `SecondaryType`, `Release`, `Format`, `Track`, `AlbumRating`, `TrackRating`, `Review`, `AlbumFavorite`, `DiaryEntry`
+- `data/repository/AlbumRepository.kt`: interface with `suspend fun getAlbums(): List<Album>` and `suspend fun getArtists(): List<Artist>`.
+- `data/repository/FakeAlbumRepository.kt`: temporary hard-coded data (six artists, fourteen albums, one with a long title and no date) with an 800 ms `delay` so the Loading state is visible. To be replaced by a real implementation behind the same interface.
 - `ui/album/AlbumListItem.kt`: UI model `AlbumListItem(album: Album, artistName: String)`, built by the ViewModel by joining album and artist data. Lives in `ui`, not `domain`.
+- `ui/album/AlbumListUiState.kt`: sealed interface with `Loading` (data object), `Success(items: List<AlbumListItem>)` and `Error(message: String)`.
+- `ui/album/AlbumListViewModel.kt`: takes an `AlbumRepository`, exposes `uiState: StateFlow<AlbumListUiState>`, loads in `init`, and has a public `load()` used by Retry. Joins albums and artists with `associateBy`; a missing artist becomes "Unknown artist".
 - `ui/album/AlbumRow.kt`: stateless row composable (`item`, `onClick`, `modifier`) with a placeholder cover `Box`, title, artist, and a "Type · Secondary · Year" subtitle. Includes private label helpers for the enums and a `@Preview`.
+- `ui/album/AlbumList.kt`: stateless `LazyColumn` of `AlbumRow` keyed by `album.id`, with a scrolling `@Preview` of eight sample albums.
+- `ui/album/AlbumListScreen.kt`: stateless screen that switches on `AlbumListUiState` (spinner, `AlbumList`, or error message with Retry button). Has Loading and Error previews.
+
+## Architecture and data flow
+
+```
+MainActivity (creates the ViewModel, collects uiState)
+  -> AlbumListViewModel(repository: AlbumRepository)
+       -> AlbumRepository (FakeAlbumRepository for now)
+  -> AlbumListScreen(state, onAlbumClick, onRetry)
+       -> AlbumList(items, onAlbumClick) -> AlbumRow(item, onClick)
+```
+
+- State flows down, events flow up. Screens and rows are stateless: they take state and lambdas.
+- The ViewModel is created in the Activity with `by viewModels { viewModelFactory { initializer { ... } } }`, which is the manual dependency wiring while there is no Hilt. Swapping the fake repository for a real one is a one-line change there.
+- `collectAsStateWithLifecycle()` turns the `StateFlow` into Compose state and stops collecting while the app is in the background.
+- Repositories return domain classes only. Mapping from DTOs and Room entities happens inside the repository implementation, never above it.
 
 ## Domain model
 
@@ -156,20 +193,20 @@ React Native / Flutter, Android calling MusicBrainz directly, a full ingestion p
 - Use `MaterialTheme.colorScheme` and `MaterialTheme.typography` tokens, never hard-coded colors or text styles.
 - Enum-to-display-string mapping lives in the UI layer (private `label()` helpers for now, string resources when localizing). The domain layer knows nothing about display text.
 - Lists use `LazyColumn` with a stable `key`.
-- UI models (like `AlbumListItem`) live in `ui`; domain classes stay in `domain`.
+- UI models (like `AlbumListItem`) and UI state live in `ui`; domain classes stay in `domain`.
+- Screen state is a `sealed interface` (one state at a time, exhaustive `when`, no `else`).
+- ViewModels expose a read-only `StateFlow` backed by a private `MutableStateFlow` (`_uiState`), launch work in `viewModelScope`, and rethrow `CancellationException` before catching `Exception`.
 
 ## Current status and roadmap
 
-Done: domain classes, theme scaffolding (template), `AlbumListItem`, `AlbumRow` with preview.
+Done: domain classes, theme scaffolding (template), `AlbumListItem`, `AlbumRow`, `AlbumList`, `AlbumListUiState`, `AlbumListViewModel`, `AlbumListScreen`, `AlbumRepository` with `FakeAlbumRepository`, MainActivity wired end to end (verified on a Pixel 7: spinner, then a scrolling list of fourteen albums).
 
 Next, in order:
 
-1. `AlbumList` composable: `LazyColumn` of `AlbumRow` with `items(items, key = { it.album.id })`, plus a preview with several hard-coded albums
-2. ViewModel + `StateFlow` feeding the list
-3. FastAPI backend and the cached catalog endpoint
-4. Room and Retrofit, then Coil (`AsyncImage` replaces the placeholder cover `Box`)
+1. FastAPI backend and the cached catalog endpoint
+2. Room and Retrofit, replacing `FakeAlbumRepository` behind `AlbumRepository`; then Coil (`AsyncImage` replaces the placeholder cover `Box`)
 
-Open questions: how track ratings display relative to album ratings; monetization would require a MusicBrainz commercial plan.
+Open questions: whether to build the detail screen and Navigation Compose before the backend (`onAlbumClick` is still a no-op); how track ratings display relative to album ratings; monetization would require a MusicBrainz commercial plan.
 
 ## Maintaining this file
 
