@@ -21,6 +21,7 @@ A social-style music diary: rate albums and tracks, write reviews, favorite albu
 - Point out real errors and bad ideas directly. Do not just agree.
 - Do not silently reverse settled decisions (see "Product decisions" and "Rejected" below). If you think one is wrong, say so and explain why.
 - Do not add dependencies, modules or architecture layers that are not listed here without asking.
+- **Verify library versions and APIs against the official docs (developer.android.com, release pages) before recommending them.** Jetpack releases move fast and third-party listings go stale. Say plainly what was and was not verified.
 - Python tooling (backend, when it exists): use `uv`, not `pip`.
 - Environment: Windows 11 and Arch Linux, Android Studio, Pixel 7 via wireless debugging.
 - Git: small commits in dependency order (dependencies, then data, then state/ViewModel, then UI, then wiring), so every commit builds on its own.
@@ -32,7 +33,9 @@ Settled:
 - Kotlin + Jetpack Compose (Material 3), single Gradle module `:app`
 - minSdk 26, targetSdk 37, compileSdk 37
 - MVVM, Coroutines/Flow (coroutines arrive transitively through the lifecycle artifacts, not declared directly)
-- Planned client libraries: Room (offline-first cache), Retrofit, Coil, Navigation Compose
+- **Navigation 3** (`androidx.navigation3`) for navigation. You own the back stack as a list of keys, and a `NavDisplay` renders the top entry. Chosen over Navigation Compose 2.x as the newer, Compose-first design for a new app. Keys should be `@Serializable` so the back stack can survive process death (details to be confirmed against Google's "Save and manage navigation state" page when the first route is written).
+- kotlinx serialization: Gradle plugin (version tied to the `kotlin` version ref, must match the compiler) plus `kotlinx-serialization-core`.
+- Planned client libraries: Room (offline-first cache), Retrofit, Coil
 - **No Hilt yet.** Wire dependencies manually for now (see "Architecture and data flow").
 - Domain model, network DTO and Room entity are **three separate classes** with mapper functions between them. Never share one class across layers.
 
@@ -63,7 +66,14 @@ Defined in `gradle/libs.versions.toml` (version catalog). Add all new dependenci
 - Configuration cache is enabled (`gradle.properties`)
 - Release build has optimization disabled for now
 
-Current `:app` dependencies: Compose BOM, `activity-compose`, `material3`, `ui`, `ui-graphics`, `ui-tooling-preview`, `core-ktx`, `lifecycle-runtime-ktx`, `lifecycle-viewmodel-compose`, `lifecycle-runtime-compose`. The lifecycle artifacts all share the version ref `lifecycleRuntimeKtx` (2.6.1, which is old; a bump is worth considering later).
+Current `:app` dependencies: Compose BOM, `activity-compose`, `material3`, `ui`, `ui-graphics`, `ui-tooling-preview`, `core-ktx`, `lifecycle-runtime-ktx`, `lifecycle-viewmodel-compose`, `lifecycle-runtime-compose`, `navigation3-runtime`, `navigation3-ui`, `kotlinx-serialization-core`.
+
+Version notes:
+
+- The lifecycle artifacts all share the version ref `lifecycleRuntimeKtx`, now 2.11.0 (bumped from 2.6.1).
+- Navigation 3 is version ref `nav3Core` = 1.2.0 (stable as of September 2026). `kotlinxSerializationCore` = 1.9.0, as in Google's setup page.
+- Serialization plugin catalog entry is `jetbrains-kotlin-serialization` (accessor `libs.plugins.jetbrains.kotlin.serialization`), with `version.ref = "kotlin"`. Do not copy the plugin version from Google's sample; it belongs to their Kotlin version.
+- Deliberately not added: `lifecycle-viewmodel-navigation3` (Google's snippet pins it at an alpha, `2.12.0-alpha04`, which may pull other lifecycle artifacts to alpha; it is needed to scope a ViewModel to each back stack entry, so decide when writing the detail ViewModel) and `adaptive-navigation3` (multi-pane layouts, not needed).
 
 Line endings: LF everywhere. `.gitattributes` has `* text=auto eol=lf` plus `*.bat text eol=crlf` (Windows batch files need CRLF), and the project code style scheme (`.idea/codeStyles/Project.xml`) sets LF for new files. `git ls-files --eol` shows the state; only `gradlew.bat` should be `w/crlf`.
 
@@ -131,7 +141,7 @@ Base path: `app/src/main/java/io/github/salman7236/soundtracked/`
 
 Files today:
 
-- `MainActivity.kt`: creates `AlbumListViewModel` with `FakeAlbumRepository`, collects its state, and hosts `AlbumListScreen` inside a `Scaffold`. `onAlbumClick` is still a no-op. Will become the navigation host.
+- `MainActivity.kt`: creates `AlbumListViewModel` with `FakeAlbumRepository`, collects its state, and hosts `AlbumListScreen` inside a `Scaffold`. `onAlbumClick` is still a no-op. Will become the Navigation 3 host (a back stack plus `NavDisplay`).
 - `domain/`: `Artist`, `Album`, `PrimaryType`, `SecondaryType`, `Release`, `Format`, `Track`, `AlbumRating`, `TrackRating`, `Review`, `AlbumFavorite`, `DiaryEntry`
 - `data/repository/AlbumRepository.kt`: interface with `suspend fun getAlbums(): List<Album>` and `suspend fun getArtists(): List<Artist>`.
 - `data/repository/FakeAlbumRepository.kt`: temporary hard-coded data (six artists, fourteen albums, one with a long title and no date) with an 800 ms `delay` so the Loading state is visible. To be replaced by a real implementation behind the same interface.
@@ -156,6 +166,8 @@ MainActivity (creates the ViewModel, collects uiState)
 - The ViewModel is created in the Activity with `by viewModels { viewModelFactory { initializer { ... } } }`, which is the manual dependency wiring while there is no Hilt. Swapping the fake repository for a real one is a one-line change there.
 - `collectAsStateWithLifecycle()` turns the `StateFlow` into Compose state and stops collecting while the app is in the background.
 - Repositories return domain classes only. Mapping from DTOs and Room entities happens inside the repository implementation, never above it.
+
+Planned navigation (not built yet): the app keeps a back stack of keys (for example the album list, then an album detail key carrying the album ID). An entry provider maps each key to a screen, and `NavDisplay` shows the top entry. `onAlbumClick` pushes the detail key, and back pops it.
 
 ## Domain model
 
@@ -184,7 +196,7 @@ All IDs are `String`. Timestamps are `java.time.Instant`. Server sets `createdAt
 
 ## Rejected (do not reintroduce without discussion)
 
-React Native / Flutter, Android calling MusicBrainz directly, a full ingestion pipeline, multi-module Gradle, microservices, a single `Rating` class with nullable links, a `Boolean` on Favorite, track favorites, sharing one class across Room/DTO/domain, building the website now.
+React Native / Flutter, Android calling MusicBrainz directly, a full ingestion pipeline, multi-module Gradle, microservices, a single `Rating` class with nullable links, a `Boolean` on Favorite, track favorites, sharing one class across Room/DTO/domain, building the website now, Navigation Compose 2.x (Navigation 3 chosen instead).
 
 ## Code conventions
 
@@ -199,14 +211,15 @@ React Native / Flutter, Android calling MusicBrainz directly, a full ingestion p
 
 ## Current status and roadmap
 
-Done: domain classes, theme scaffolding (template), `AlbumListItem`, `AlbumRow`, `AlbumList`, `AlbumListUiState`, `AlbumListViewModel`, `AlbumListScreen`, `AlbumRepository` with `FakeAlbumRepository`, MainActivity wired end to end (verified on a Pixel 7: spinner, then a scrolling list of fourteen albums).
+Done: domain classes, theme scaffolding (template), `AlbumListItem`, `AlbumRow`, `AlbumList`, `AlbumListUiState`, `AlbumListViewModel`, `AlbumListScreen`, `AlbumRepository` with `FakeAlbumRepository`, MainActivity wired end to end (verified on a Pixel 7: spinner, then a scrolling list of fourteen albums). Navigation 3, kotlinx serialization and the lifecycle bump are added to the build (no navigation code written yet).
 
 Next, in order:
 
-1. FastAPI backend and the cached catalog endpoint
-2. Room and Retrofit, replacing `FakeAlbumRepository` behind `AlbumRepository`; then Coil (`AsyncImage` replaces the placeholder cover `Box`)
+1. Album detail screen with Navigation 3: add `getAlbum(id): Album?` to `AlbumRepository` and the fake (null for an unknown ID), then a detail key carrying the album ID, `AlbumDetailUiState`, `AlbumDetailViewModel`, a stateless `AlbumDetailScreen` with previews, and a back stack plus `NavDisplay` in `MainActivity` so `onAlbumClick` pushes the detail key. Read Google's "Save and manage navigation state" page before writing the key.
+2. FastAPI backend and the cached catalog endpoint
+3. Room and Retrofit, replacing `FakeAlbumRepository` behind `AlbumRepository`; then Coil (`AsyncImage` replaces the placeholder cover `Box`)
 
-Open questions: whether to build the detail screen and Navigation Compose before the backend (`onAlbumClick` is still a no-op); how track ratings display relative to album ratings; monetization would require a MusicBrainz commercial plan.
+Open questions: whether to use the alpha `lifecycle-viewmodel-navigation3` add-on for per-entry ViewModel scoping (see "Version notes"); how track ratings display relative to album ratings; monetization would require a MusicBrainz commercial plan.
 
 ## Maintaining this file
 
